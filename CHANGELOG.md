@@ -1,4 +1,15 @@
-# CorridorKey 2 for Resolve: changelog
+# CorridorKey 2 for Baselight: changelog
+
+- 1.01 (2026-11-15): the worker also writes its plan (GPU memory free,
+  frames per chunk, low-VRAM mode), its result and any error to
+  worker.log, to show why processing is slow. First user test: the plugin
+  loads and appears in Baselight.
+- 1.00 (2026-11-15): first experimental release for Baselight on Linux
+  with NVIDIA GPUs: Linux build, CorridorKey on CUDA (PyTorch 2.9.1 for
+  CUDA 12.8), frame range without a clip length, Rec.709 from Baselight.
+
+Earlier versions: CorridorKey 2 for Resolve by Creative Video Tips.
+
 
 - 1.00 (2026-11-13): first public release. Delete Cache says "Nothing to
   delete" when the node has no stored results, instead of reporting that it

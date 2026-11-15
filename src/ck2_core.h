@@ -18,9 +18,9 @@
 
 namespace ck2 {
 
-constexpr const char* kVersion = "1.00";
+constexpr const char* kVersion = "1.01";
 constexpr int kVersionMajor = 1;        // OFX major stays 1 so saved comps keep the node
-constexpr int kVersionMinor = 100;      // 0.30 -> 30, ..., 1.00 -> 100
+constexpr int kVersionMinor = 101;      // 0.30 -> 30, ..., 1.00 -> 100, 1.01 -> 101
 
 enum class Output { Premultiplied = 0, MatteOnly = 1, Foreground = 2, SourceWithMatte = 3 };
 
