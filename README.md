@@ -5,7 +5,7 @@
 By KolorKlinic. Free and unofficial: not made or endorsed by Corridor Digital or FilmLight.
 
 > [!WARNING]
-> **Experimental: this plugin has not been tested in Baselight.** It is built and checked automatically on Linux (it compiles, its tests pass, it loads as an OFX plugin, and its Python packages install), but nobody has run it inside Baselight yet. Some of what it relies on — Baselight letting a plugin read every frame of a clip when you press **Process**, and starting a Python process from the plugin — comes from FilmLight's published notes, not from a test. If you try it, please [open an issue](../../issues) with what happened, your Baselight version and the logs (see *Troubleshooting*).
+> **Experimental.** A first user test in Baselight (2026-11-15) confirmed that the plugin **loads and appears in Baselight**, and reported processing as **slow**. Which Baselight version, GPU and speed haven't been reported yet, and nothing else has been tested in Baselight. Every build is also checked automatically on Linux (it compiles, its tests pass, it loads as an OFX plugin, and its Python packages install). If you try it, please [open an issue](../../issues) with what happened, your Baselight version, your GPU and driver (`nvidia-smi`), seconds per HD frame, and the logs (see *Troubleshooting*).
 
 ![A man in front of a green screen, and the same frame keyed by CorridorKey 2 over a checkerboard](corridorkey2_example.jpg)
 
@@ -53,12 +53,15 @@ Baselight renders on the node, while **Process** runs where you press it. The no
 
 ## Known unknowns
 
-These are the things a first test in Baselight will answer:
+Confirmed so far: the plugin loads and appears in Baselight. Still to be reported:
 
-- whether Baselight lets the plugin read all the clip's frames when **Process** is pressed, and start the worker process;
 - whether Status and the redraw after Process update while Baselight is open;
-- whether CorridorKey gets enough GPU memory while Baselight holds its own (the worker uses what is free when the job starts);
+- how fast it keys, and on which GPU;
 - how Baselight handles the colour space the plugin asks for.
+
+### If it's slow
+
+CorridorKey is heavy on any GPU; Corridor's own figures are about a second per HD frame on the fastest cards. Inside Baselight it can be slower, because Baselight keeps much of the GPU's memory for itself and CorridorKey only gets what is left. With little memory free, it keys fewer frames at once or switches to its low-memory mode, which gives the same result more slowly. To see what it used, look for the `"event": "plan"` line in `~/.cache/cvt-corridorkey2/logs/worker.log`: `budget_gb` is the GPU memory it found free, `window` the frames keyed together, and `low_vram` whether it used the low-memory mode. A GPU with more memory, or less held by Baselight, keys faster.
 
 ## Troubleshooting
 
