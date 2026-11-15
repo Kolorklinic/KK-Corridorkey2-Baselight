@@ -1,5 +1,11 @@
 # CorridorKey 2 for Baselight: changelog
 
+- 1.02 (2026-11-15): colour management. The plugin asks Baselight for
+  scene-linear Rec.709 instead of display Rec.709, so Baselight converts
+  the working space (E-Gamut, ACES...) to it and back by itself, highlights
+  above 1.0 are kept, and no Colour Space or Truelight conversion is needed
+  around the effect. Input Is now defaults to Linear Rec.709 (was Rec.709;
+  sRGB Linear is renamed Linear Rec.709, Rec.709 is renamed Rec.709 (display)).
 - 1.01 (2026-11-15): the worker also writes its plan (GPU memory free,
   frames per chunk, low-VRAM mode), its result and any error to
   worker.log, to show why processing is slow. First user test: the plugin

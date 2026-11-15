@@ -41,7 +41,7 @@ Install Model puts everything in `~/CorridorKey` of the user who runs it; do it 
 Add CorridorKey 2 to your shot and press **Process**. A progress window shows the frame, the chunk and the time left; Status says the same. The effect then draws from the stored results, so playback is instant and **Output** and **Despill** change live.
 
 - **Range:** Baselight may not tell plugins how long a clip is. If Process says so, set **Range > Frames** to **First to Last** and enter the frames.
-- **Input Is:** the plugin asks Baselight for Rec.709 (display) pictures, which is what **Rec.709** expects. If the key looks wrong, try **sRGB Linear**.
+- **Input Is:** leave it at **Linear Rec.709**. The plugin asks Baselight for scene-linear Rec.709, and Baselight converts your working space (E-Gamut, ACES…) to it on the way in and back on the way out. Don't add Colour Space or Truelight conversions around the effect; they would convert twice. Linear is also what CorridorKey prefers for graded or HDR material, since it keeps highlights above 1.0.
 - **Temporal Chunks:** how many frames CorridorKey keys together. Auto picks the most that fits in the GPU memory Baselight leaves free, using CorridorKey's own NVIDIA figures; a chunk too long for the memory runs in CorridorKey's low-memory mode (same result, slower).
 - **Output:** Premultiplied, Matte Only, Unpremultiplied, or Source + Matte (Unpremultiplied).
 - **Hint:** a rough matte of the subject on the Hint input, or in the source's alpha. At a strength of 0.3 to 0.5 it removes anything outside it and keeps CorridorKey's own edges.
@@ -57,7 +57,7 @@ Confirmed so far: the plugin loads and appears in Baselight. Still to be reporte
 
 - whether Status and the redraw after Process update while Baselight is open;
 - how fast it keys, and on which GPU;
-- how Baselight handles the colour space the plugin asks for.
+- whether Baselight converts to and from the scene-linear Rec.709 the plugin asks for (1.02 and later; 1.00 and 1.01 asked for display Rec.709).
 
 ### If it's slow
 

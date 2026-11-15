@@ -578,7 +578,7 @@ void CorridorKey2Effect::startProcess() {
     spec.workDir = (staging / "work").string();
     spec.outputDir = cacheDir.string();
     spec.hintDir = (staging / "hint").string();
-    spec.inputLinear = (in != 0);         // sRGB Linear, or ACEScg converted to it
+    spec.inputLinear = (in != 0);         // Linear Rec.709, or ACEScg converted to it
     spec.window = kWindowChoices[win];
     spec.precision = kPrecisionChoices[prec];
     spec.hintFrom = hintFrom;
@@ -929,12 +929,15 @@ void CorridorKey2Factory::describeInContext(OFX::ImageEffectDescriptor& desc, OF
     dst->setSupportsTiles(false);
 
     // Baselight hands plugins scene-linear pictures in an unknown space unless
-    // the clip names the spaces it takes. Ask for display Rec.709, which is
-    // what Input Is: Rec.709 (the default) expects; other hosts ignore it.
+    // the clip names the space it takes. Ask for scene-linear Rec.709: Baselight
+    // then converts from the working space (E-Gamut, ACES...) on the way in and
+    // back on the way out, and CorridorKey keeps highlights above 1.0 (its
+    // linear path). That is what Input Is: Linear Rec.709 (the default) expects;
+    // other hosts ignore the property.
     for (OFX::ClipDescriptor* c : {src, dst}) {
         try {
             c->getPropertySet().propSetString("uk.ltd.filmlight.OfxImageEffectPropSupportedColourSpaces",
-                                              "rec709/rec1886", 0, false);
+                                              "rec709/linear", 0, false);
         } catch (...) {}
     }
 
@@ -943,12 +946,14 @@ void CorridorKey2Factory::describeInContext(OFX::ImageEffectDescriptor& desc, OF
     // Top, before Process: what the footage is, and how many frames are keyed
     // together. Single controls, so no section of their own.
     choice(desc, page, nullptr, kInputIs, "Input Is",
-           "Rec.709: pictures as they look on a monitor (most timelines). "
-           "sRGB Linear: linear light with sRGB/Rec.709 primaries. "
-           "ACEScg: linear light with ACES AP1 primaries, such as CG renders; the output "
-           "stays in ACEScg. "
+           "Linear Rec.709 (default): scene-linear light with Rec.709/sRGB primaries. "
+           "Baselight converts your working space to it and back by itself, so no Colour "
+           "Space or Truelight conversion is needed around the effect. "
+           "Rec.709 (display): pictures as they look on a monitor, for hosts that send them. "
+           "ACEScg: linear light with ACES AP1 primaries, for hosts that send ACEScg; the "
+           "output stays in ACEScg. "
            "Changing it needs a new Process.",
-           {"Rec.709", "sRGB Linear", "ACEScg"}, 0);
+           {"Rec.709 (display)", "Linear Rec.709", "ACEScg"}, 1);
     choice(desc, page, nullptr, kWindow, "Temporal Chunks",
            "How many frames CorridorKey keys together; chunks overlap by half and are "
            "blended, which keeps the matte steady from frame to frame. Longer chunks: "
