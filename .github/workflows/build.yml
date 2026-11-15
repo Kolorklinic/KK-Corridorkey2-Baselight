@@ -1,0 +1,128 @@
+# CorridorKey 2 for Baselight - Linux build, checks and releases.
+#
+# plugin:      builds the OFX bundle inside Rocky Linux 8 (glibc 2.28, like the
+#              RHEL/Rocky systems Baselight runs on), runs the C++ tests, checks
+#              the plugin loads and exports only the OFX entry points, and
+#              packages it.
+# environment: installs the exact Python packages Install Model uses (PyTorch
+#              2.9.1 for CUDA 12.8) and checks CorridorKey's code and the
+#              worker's GPU-memory planning. No GPU here: keying isn't tested.
+# release:     on a v* tag, attaches the package to a GitHub release.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plugin:
+    runs-on: ubuntu-latest
+    container: rockylinux:8
+    steps:
+      - name: Tools
+        run: |
+          dnf -y -q install epel-release
+          dnf -y -q install gcc-toolset-12-gcc-c++ gcc-toolset-12-binutils cmake make git curl tar gzip \
+                            findutils which python3.11 file
+          echo "/opt/rh/gcc-toolset-12/root/usr/bin" >> "$GITHUB_PATH"
+          python3.11 -m venv /opt/uvenv
+          /opt/uvenv/bin/pip install -q uv==0.13.8
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: |
+          export UV_BIN=/opt/uvenv/bin/uv
+          export UV_LICENSES=$(ls -d /opt/uvenv/lib/python3.11/site-packages/uv-*.dist-info/licenses)
+          gcc --version | head -1
+          ./build.sh
+      - name: Check the plugin loads
+        run: |
+          P=build/CorridorKey2.ofx.bundle/Contents/Linux-x86-64/CorridorKey2.ofx
+          file "$P"
+          echo "Needs glibc up to: $(objdump -T "$P" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
+          echo "Shared libraries:"; ldd "$P"
+          /opt/uvenv/bin/python - "$P" <<'PY'
+          import ctypes, sys
+          lib = ctypes.CDLL(sys.argv[1])
+          n = lib.OfxGetNumberOfPlugins()
+          class OfxPlugin(ctypes.Structure):
+              _fields_ = [("pluginApi", ctypes.c_char_p), ("apiVersion", ctypes.c_int),
+                          ("pluginIdentifier", ctypes.c_char_p),
+                          ("pluginVersionMajor", ctypes.c_uint), ("pluginVersionMinor", ctypes.c_uint)]
+          lib.OfxGetPlugin.restype = ctypes.POINTER(OfxPlugin)
+          p = lib.OfxGetPlugin(0).contents
+          print(n, "plugin:", p.pluginApi.decode(), p.pluginIdentifier.decode(),
+                f"{p.pluginVersionMajor}.{p.pluginVersionMinor}")
+          assert n == 1 and p.pluginApi == b"OfxImageEffectPluginAPI"
+          PY
+      - name: Package
+        run: |
+          V=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' worker/ck2_worker.py)
+          D=CorridorKey2-Baselight-$V-linux-x86_64
+          mkdir -p "dist/$D"
+          cp -R build/CorridorKey2.ofx.bundle install.sh LICENSE THIRD_PARTY_NOTICES.md README.md "dist/$D/"
+          tar -C dist -czf "dist/$D.tar.gz" "$D"
+          sha256sum "dist/$D.tar.gz" | tee "dist/$D.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CorridorKey2-Baselight-linux-x86_64
+          path: dist/*.tar.gz*
+
+  environment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space (PyTorch with CUDA is large)
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.8"
+      - name: Install the packages Install Model uses
+        run: |
+          uv venv -q --python 3.12 --python-preference only-managed /tmp/ck2venv
+          uv pip install -q --python /tmp/ck2venv/bin/python --torch-backend cu128 \
+             -r setup/requirements-lock-linux.txt setup/wheels/*.whl
+          /tmp/ck2venv/bin/python -c "import torch, torchvision, timm, transformers, cv2, OpenEXR, tkinter; print('torch', torch.__version__, 'CUDA', torch.version.cuda)"
+      - name: CorridorKey's code at the tested commit
+        run: |
+          C=485f5e9ab759ead6138cc990776184b59d6ea971
+          curl -fsSL -o /tmp/ck.tgz "https://codeload.github.com/nikopueringer/CorridorKey2.0/tar.gz/$C"
+          tar -xzf /tmp/ck.tgz -C /tmp && mv "/tmp/CorridorKey2.0-$C" /tmp/CorridorKey2.0
+          (cd /tmp/CorridorKey2.0 && sha256sum -c --quiet "$GITHUB_WORKSPACE/setup/corridorkey_files.sha256")
+          echo "code checked"
+      - name: Worker planning (no GPU)
+        run: |
+          /tmp/ck2venv/bin/python - <<'PY'
+          import sys
+          sys.path.insert(0, "worker")
+          import ck2_worker as w
+          for free in (8, 16, 24, 48):
+              print(f"HD with {free} GB free:", w.vram_plan("/tmp/CorridorKey2.0", 1920, 1080, 500, "auto", free * 0.9))
+          sys.path.insert(0, "/tmp/CorridorKey2.0")
+          import corridorkey.runtime as rt   # the runtime imports with these packages
+          print("CorridorKey runtime imports")
+          PY
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [plugin, environment]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CorridorKey2-Baselight-linux-x86_64
+          path: dist
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+             --title "CorridorKey 2 for Baselight $GITHUB_REF_NAME (experimental)" --prerelease \
+             --notes "Experimental and untested on Baselight. Linux x86_64 with an NVIDIA GPU. See the README."

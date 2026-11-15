@@ -13,6 +13,7 @@
 #include "ck2_job.h"
 
 #include <cmath>
+#include <limits>
 #include <condition_variable>
 #include <mutex>
 #include <cstdio>
@@ -183,6 +184,13 @@ static void unitTests() {
     // No timeline bounds (0, 0): the clip's frames.
     CHECK(ck2::processRange(1001, 1023, 0, 0, false, 0, 0, f0, f1) && f0 == 1001 && f1 == 1023);
     CHECK(!ck2::processRange(1001, 1023, 0, 500, false, 0, 0, f0, f1));
+    // Baselight: no clip length (empty, infinite or huge range).
+    const double inf = std::numeric_limits<double>::infinity();
+    CHECK(ck2::processRange(0, -1, 100, 199, false, 0, 0, f0, f1) && f0 == 100 && f1 == 199);
+    CHECK(ck2::processRange(-inf, inf, 100, 199, true, 120, 150, f0, f1) && f0 == 120 && f1 == 150);
+    CHECK(ck2::processRange(-1e9, 1e9, 0, 0, true, 10, 20, f0, f1) && f0 == 10 && f1 == 20);
+    CHECK(!ck2::processRange(-inf, inf, 0, 0, false, 0, 0, f0, f1));   // nothing to go on
+    CHECK(!ck2::processRange(0, -1, 0, 0, true, 20, 10, f0, f1));
 }
 
 // Runs a real job through ck2::Job, as the plugin does, and prints each update.

@@ -6,8 +6,8 @@
 #
 # The plugin reads and writes DWAB-compressed EXRs, so it links OpenEXR
 # (BSD-3-Clause) and Imath (BSD-3-Clause) into itself: a plugin can't rely on
-# Homebrew's copies on other Macs. Downloads pinned release archives, checks
-# their SHA-256, builds arm64 static libraries into build/deps/install.
+# the system's copies. Downloads pinned release archives, checks
+# their SHA-256, builds static libraries into build/deps/install.
 # Homebrew is ignored on purpose. Called by build.sh; skips if already built.
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -26,10 +26,14 @@ EXR_URL="https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/
 EXR_SHA="85a291b9b8563fabef1aa3f6e912d744ce1d4b9fd5a8f978eda194cd51b15ae9"
 
 mkdir -p "$DEPS/src"
+if command -v sha256sum >/dev/null; then SHA256=sha256sum; else SHA256="shasum -a 256"; fi
+JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+# Linux: the plugin is the target. macOS: a development build, for the tests only.
+if [ "$(uname)" = "Darwin" ]; then PLATFORM=(-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 -DCMAKE_FIND_FRAMEWORK=NEVER); else PLATFORM=(); fi
 fetch() {   # url sha name
     local f="$DEPS/src/$3.tar.gz"
     [ -f "$f" ] || curl --fail --silent --show-error --location --proto '=https' -o "$f" "$1"
-    echo "$2  $f" | shasum -a 256 -c --quiet - || { echo "Checksum mismatch: $3"; rm -f "$f"; exit 1; }
+    echo "$2  $f" | $SHA256 -c --quiet - || { echo "Checksum mismatch: $3"; rm -f "$f"; exit 1; }
     rm -rf "$DEPS/src/$3" && mkdir "$DEPS/src/$3"
     tar -xzf "$f" -C "$DEPS/src/$3" --strip-components 1
 }
@@ -38,16 +42,15 @@ fetch "$IMATH_URL" "$IMATH_SHA" imath
 fetch "$EXR_URL" "$EXR_SHA" openexr
 
 COMMON=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
-        -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_CXX_VISIBILITY_PRESET=hidden
         -DCMAKE_C_VISIBILITY_PRESET=hidden -DCMAKE_VISIBILITY_INLINES_HIDDEN=ON
-        "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local" -DCMAKE_FIND_FRAMEWORK=NEVER
+        "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local" "${PLATFORM[@]}"
         -DCMAKE_INSTALL_PREFIX="$PREFIX"
         "-DCMAKE_C_FLAGS=-ffile-prefix-map=$HOME=~" "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$HOME=~")
 
 cmake -S "$DEPS/src/imath" -B "$DEPS/build-imath" "${COMMON[@]}" \
       -DIMATH_INSTALL_PKG_CONFIG=OFF -DPYTHON=OFF > "$DEPS/imath.log"
-cmake --build "$DEPS/build-imath" -j 8 --target install >> "$DEPS/imath.log"
+cmake --build "$DEPS/build-imath" --target install -j "$JOBS" >> "$DEPS/imath.log"
 
 cmake -S "$DEPS/src/openexr" -B "$DEPS/build-openexr" "${COMMON[@]}" \
       -DImath_DIR="$PREFIX/lib/cmake/Imath" -DOPENEXR_FORCE_INTERNAL_DEFLATE=ON \
@@ -55,7 +58,7 @@ cmake -S "$DEPS/src/openexr" -B "$DEPS/build-openexr" "${COMMON[@]}" \
       -DOPENEXR_BUILD_EXAMPLES=OFF -DOPENEXR_INSTALL_PKG_CONFIG=OFF \
       -DOPENEXR_TEST_LIBRARIES=OFF -DOPENEXR_TEST_TOOLS=OFF -DOPENEXR_TEST_PYTHON=OFF \
       > "$DEPS/openexr.log"
-cmake --build "$DEPS/build-openexr" -j 8 --target install >> "$DEPS/openexr.log"
+cmake --build "$DEPS/build-openexr" --target install -j "$JOBS" >> "$DEPS/openexr.log"
 cp "$DEPS/src/openexr/LICENSE.md" "$PREFIX/OpenEXR-LICENSE.md"
 cp "$DEPS/src/imath/LICENSE.md" "$PREFIX/Imath-LICENSE.md"
 cp "$DEPS/src/openexr/external/OpenJPH/LICENSE" "$PREFIX/OpenJPH-LICENSE.txt"

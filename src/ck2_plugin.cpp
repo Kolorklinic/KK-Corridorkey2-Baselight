@@ -81,11 +81,11 @@ std::string expandHome(const std::string& p) {
     return p;
 }
 
-// Logs always stay on this Mac; results and staging go in the Cache Folder.
+// Logs always stay on this computer; results and staging go in the Cache Folder.
 fs::path localRoot() { return fs::path(expandHome("~/.cache/cvt-corridorkey2")); }
 
 // The Cache Folder for new nodes: ~/.config/cvt-corridorkey2/settings.json
-// {"cache_folder": "..."} lets each Mac choose (e.g. a fast media drive).
+// {"cache_folder": "..."} lets each computer choose (e.g. a fast media drive).
 std::string settingsValue(const char* key, const char* fallback) {
     std::ifstream in(expandHome("~/.config/cvt-corridorkey2/settings.json"));
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -95,7 +95,7 @@ std::string settingsValue(const char* key, const char* fallback) {
 
 std::string defaultCacheFolder() { return settingsValue("cache_folder", "~/.cache/cvt-corridorkey2"); }
 
-// Where CorridorKey and its Python are: always this Mac's own setting
+// Where CorridorKey and its Python are: always this computer's own setting
 // (settings.json "model_folder" / "python", else Install Model's folders),
 // never a value saved in a comp. A comp from someone else could otherwise
 // make Process run any program as "Python".
@@ -399,7 +399,7 @@ void CorridorKey2Effect::startProcess() {
     const bool writeId = !isNodeId(id) || shared;
     if (writeId) id = newNodeId();
 
-    const std::string python = pythonPath();       // this Mac's, never the comp's
+    const std::string python = pythonPath();       // this computer's, never the comp's
     const std::string model = modelFolderPath();
     fs::path worker = bundleResources() / "worker" / "ck2_worker.py";
     if (!fs::exists(fs::path(model) / "corridorkey") || !fs::exists(python)) {
@@ -426,6 +426,12 @@ void CorridorKey2Effect::startProcess() {
     plog("process: clip [" + std::to_string(clip.min) + ", " + std::to_string(clip.max) + "], timeline [" +
          std::to_string(t1) + ", " + std::to_string(t2) + "] -> frames " + std::to_string(first) + " to " +
          std::to_string(last));
+    if (!any && !(clip.max >= clip.min && clip.max - clip.min < 1e7) && !(t2 > t1)) {
+        // The host doesn't say how long the clip is (Baselight).
+        setStatus("Error: this host doesn't give the clip's length. Set Range > Frames to "
+                  "First to Last and enter the frames");
+        return;
+    }
     if (!any) {
         setStatus("Error: no frames to process (the clip has frames " +
                   std::to_string(static_cast<long>(std::ceil(clip.min - 1e-6))) + " to " +
@@ -615,18 +621,29 @@ void CorridorKey2Effect::changedParam(const OFX::InstanceChangedArgs& args, cons
     if (name == kProcess) {
         startProcess();
     } else if (name == kInstallModel) {
-        // Opens the setup in Terminal, where it can ask for the licence and show progress.
-        fs::path cmd = bundleResources() / "setup" / "Install CorridorKey Model.command";
+        // Opens the setup in a terminal window, where it can ask for the licence
+        // and show progress. The first terminal program found is used; the shell
+        // puts it in the background and exits, so the host never waits on it.
+        fs::path cmd = bundleResources() / "setup" / "install_model.sh";
         if (!fs::exists(cmd)) { setStatus("Error: setup missing from the plugin"); return; }
-        std::string open = "/usr/bin/open", a = "-a", term = "Terminal", c = cmd.string();
-        char* argv[] = {open.data(), a.data(), term.data(), c.data(), nullptr};
+        const std::string script =
+            "s=\"$1\"; "
+            "for t in \"$TERMINAL\" x-terminal-emulator gnome-terminal konsole xfce4-terminal xterm; do "
+            "  [ -n \"$t\" ] && command -v \"$t\" >/dev/null 2>&1 || continue; "
+            "  case \"$t\" in gnome-terminal) \"$t\" -- bash \"$s\" & ;; "
+            "                *) \"$t\" -e bash \"$s\" & ;; esac; "
+            "  exit 0; "
+            "done; exit 1";
+        std::string sh = "/bin/sh", c = "-c", name = "ck2-setup", path = cmd.string();
+        std::string scriptArg = script;
+        char* argv[] = {sh.data(), c.data(), scriptArg.data(), name.data(), path.data(), nullptr};
         pid_t pid;
-        if (posix_spawn(&pid, open.c_str(), nullptr, nullptr, argv, environ) == 0) {
-            int st;
-            waitpid(pid, &st, 0);
-            setStatus("Setup opened in Terminal");
+        int st = 1;
+        if (posix_spawn(&pid, sh.c_str(), nullptr, nullptr, argv, environ) == 0 &&
+            waitpid(pid, &st, 0) == pid && WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+            setStatus("Setup opened in a terminal window");
         } else {
-            setStatus("Error: could not open Terminal");
+            setStatus("Error: no terminal found. Run " + path + " in a terminal");
         }
     } else if (name == kClearCache) {
         {
@@ -851,8 +868,8 @@ void CorridorKey2Factory::describe(OFX::ImageEffectDescriptor& desc) {
     desc.setLabels("CorridorKey 2", "CorridorKey 2", "CorridorKey 2");
     desc.setPluginGrouping("KolorKlinic");
     desc.setPluginDescription(
-        "CorridorKey 2 for Resolve (unofficial). Keys green and blue screens with "
-        "CorridorKey 2.0 by Corridor Digital, on the Mac's GPU (Apple Silicon or AMD). By KolorKlinic.");
+        "CorridorKey 2 for Baselight (unofficial, experimental). Keys green and blue screens with "
+        "CorridorKey 2.0 by Corridor Digital, on an NVIDIA GPU (Linux). By KolorKlinic.");
     // Filter (Edit page) and General (Fusion page, with the Hint input). The
     // 0.06-0.12 Process freezes were setValue before fetchImage, not the
     // General context (0.11-0.13 offered Filter only while that was found).
@@ -911,6 +928,16 @@ void CorridorKey2Factory::describeInContext(OFX::ImageEffectDescriptor& desc, OF
     dst->addSupportedComponent(OFX::ePixelComponentRGBA);
     dst->setSupportsTiles(false);
 
+    // Baselight hands plugins scene-linear pictures in an unknown space unless
+    // the clip names the spaces it takes. Ask for display Rec.709, which is
+    // what Input Is: Rec.709 (the default) expects; other hosts ignore it.
+    for (OFX::ClipDescriptor* c : {src, dst}) {
+        try {
+            c->getPropertySet().propSetString("uk.ltd.filmlight.OfxImageEffectPropSupportedColourSpaces",
+                                              "rec709/rec1886", 0, false);
+        } catch (...) {}
+    }
+
     OFX::PageParamDescriptor* page = desc.definePageParam("Controls");
 
     // Top, before Process: what the footage is, and how many frames are keyed
@@ -925,8 +952,9 @@ void CorridorKey2Factory::describeInContext(OFX::ImageEffectDescriptor& desc, OF
     choice(desc, page, nullptr, kWindow, "Temporal Chunks",
            "How many frames CorridorKey keys together; chunks overlap by half and are "
            "blended, which keeps the matte steady from frame to frame. Longer chunks: "
-           "steadier on motion, more memory (HD: 16 about 24 GB, 24 about 31 GB, 40 about "
-           "46 GB, 80 about 82 GB). Auto picks the longest this Mac's memory allows. "
+           "steadier on motion, more GPU memory. Auto picks the longest that fits in the GPU "
+           "memory Baselight leaves free (CorridorKey's own NVIDIA figures); a chunk too long "
+           "for it runs in CorridorKey's low-memory mode (same result, slower). "
            "Changing it needs a new Process.",
            {"Auto", "8", "16", "24", "40", "80"}, 0);
 
@@ -1071,22 +1099,22 @@ void CorridorKey2Factory::describeInContext(OFX::ImageEffectDescriptor& desc, OF
     // both sides in Resolve and Fusion, so it can't show anything once.
     const std::string setupTitle = std::string("Setup \u00b7 Version ") + ck2::kVersion;
     auto* gSetup = group(desc, page, "groupSetup", setupTitle.c_str(), false);
-    gSetup->setHint("CorridorKey 2 for Resolve " + std::string(ck2::kVersion) +
+    gSetup->setHint("CorridorKey 2 for Baselight " + std::string(ck2::kVersion) +
                     ": by KolorKlinic, based on the OFX by Creative Video Tips; model by Corridor Digital. Unofficial; "
                     "CC BY-NC-SA 4.0 with the CorridorKey terms.");
-    // Precision is picked for each Mac (fp16 on M1 to M4, bf16 on M5 and later);
+    // Precision is picked for each GPU (bf16 where supported, else fp16);
     // kept as a hidden param so saved comps and the cache names still match.
     choice(desc, nullptr, nullptr, kPrecision, "Precision", "", {"Auto", "bf16", "fp16"}, 0)
         ->setIsSecret(true);
     auto* model = desc.defineStringParam(kModelFolder);
     model->setAnimates(false);              // never keyframed
     model->setLabels("Model Folder", "Model Folder", "Model Folder");
-    model->setHint("Where CorridorKey 2.0 and its weights are on this Mac (Install Model puts "
+    model->setHint("Where CorridorKey 2.0 and its weights are on this computer (Install Model puts "
                    "them in ~/CorridorKey). For safety this is never taken from a comp; to use "
                    "another folder, set \"model_folder\" in ~/.config/cvt-corridorkey2/settings.json.");
     model->setStringType(OFX::eStringTypeDirectoryPath);
     model->setDefault(settingsValue("model_folder", kDefaultModel));
-    model->setIsPersistant(false);           // shown only; Process uses this Mac's setting
+    model->setIsPersistant(false);           // shown only; Process uses this computer's setting
     model->setEnabled(false);
     model->setEvaluateOnChange(false);
     model->setParent(*gSetup);
@@ -1094,19 +1122,19 @@ void CorridorKey2Factory::describeInContext(OFX::ImageEffectDescriptor& desc, OF
     auto* python = desc.defineStringParam(kPythonPath);
     python->setAnimates(false);              // never keyframed
     python->setLabels("Python", "Python", "Python");
-    python->setHint("The Python with CorridorKey's packages, on this Mac. For safety this is "
+    python->setHint("The Python with CorridorKey's packages, on this computer. For safety this is "
                     "never taken from a comp; to use another, set \"python\" in "
                     "~/.config/cvt-corridorkey2/settings.json.");
     python->setStringType(OFX::eStringTypeFilePath);
     python->setDefault(settingsValue("python", kDefaultPython));
-    python->setIsPersistant(false);           // shown only; Process uses this Mac's setting
+    python->setIsPersistant(false);           // shown only; Process uses this computer's setting
     python->setEnabled(false);
     python->setEvaluateOnChange(false);
     python->setParent(*gSetup);
     page->addChild(*python);
     auto* install = desc.definePushButtonParam(kInstallModel);
     install->setLabels("Install Model", "Install Model", "Install Model");
-    install->setHint("Opens Terminal to download and set up CorridorKey 2.0 and its weights "
+    install->setHint("Opens a terminal window to download and set up CorridorKey 2.0 and its weights "
                      "(about 5 GB) in ~/CorridorKey. Also repairs an existing install.");
     install->setParent(*gSetup);
     page->addChild(*install);

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# CorridorKey 2 for Resolve - model setup
+# CorridorKey 2 for Baselight - model setup
 #
 # From Creative Video Tips (CVT)
 # Created by Chadwick  |  https://creativevideotips.com
@@ -14,8 +14,7 @@
 #   3. Builds a private Python for it (Python 3.12 and pinned packages).
 #   4. Downloads the weights (about 5 GB: CorridorKey's own and the three
 #      foundation models it uses) and checks them the same way.
-#   5. Loads the model once on the GPU to confirm it works (Apple Silicon,
-#      or the AMD GPU of an Intel Mac).
+#   5. Loads the model once on the NVIDIA GPU to confirm it works.
 # Safe to run again: finished steps are checked and skipped.
 #
 # Options:
@@ -53,15 +52,14 @@ fail() { printf '\nSTOPPED: %s\n' "$*"; exit 1; }
 
 say "CorridorKey 2 for Resolve - model setup"
 echo "  Folder: $FOLDER"
-ARCH="$(uname -m)"
-case "$ARCH" in
-    arm64) LOCK="$HERE/requirements-lock.txt"; GPU="the Apple GPU" ;;
-    x86_64) LOCK="$HERE/requirements-lock-intel.txt"; GPU="the AMD GPU" ;;   # PyTorch 2.2.2, fp32
-    *) fail "this Mac ($ARCH) isn't supported." ;;
-esac
+[ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] || fail "this needs Linux on x86_64."
+LOCK="$HERE/requirements-lock-linux.txt"     # PyTorch 2.9.1 for CUDA 12.8, as CorridorKey 2.0 is tested
+GPU="the NVIDIA GPU"
+command -v nvidia-smi >/dev/null && echo "  GPU: $(nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader | head -1)"
+if command -v sha256sum >/dev/null; then SHA256=sha256sum; else SHA256="shasum -a 256"; fi
 mkdir -p "$FOLDER" || fail "can't create $FOLDER"
 chmod 700 "$FOLDER"
-FREE_GB=$(df -g "$FOLDER" | awk 'NR==2 {print $4}')
+FREE_GB=$(df -BG --output=avail "$FOLDER" | awk 'NR==2 {gsub("G",""); print $1}')
 [ -d "$CODE/weights" ] || [ "$FREE_GB" -ge 15 ] || fail "need about 15 GB free (have ${FREE_GB} GB)."
 [ -x "$UV" ] || fail "the plugin's uv is missing ($UV). Reinstall the plugin."
 
@@ -87,7 +85,7 @@ EOF
 fi
 
 # --- 2. CorridorKey's code -----------------------------------------------------
-verify_code() { (cd "$CODE" && shasum -a 256 -c --quiet "$HERE/corridorkey_files.sha256") > /dev/null 2>&1; }
+verify_code() { (cd "$CODE" && $SHA256 -c --quiet "$HERE/corridorkey_files.sha256") > /dev/null 2>&1; }
 if [ -d "$CODE" ] && verify_code; then
     say "CorridorKey code: already in place and checked"
 else
@@ -97,7 +95,7 @@ else
         || fail "download failed. Check the internet connection."
     tar -xzf "$TMP/code.tar.gz" -C "$TMP" || fail "the download is damaged."
     NEW="$TMP/CorridorKey2.0-$COMMIT"
-    (cd "$NEW" && shasum -a 256 -c --quiet "$HERE/corridorkey_files.sha256") \
+    (cd "$NEW" && $SHA256 -c --quiet "$HERE/corridorkey_files.sha256") \
         || fail "the downloaded code doesn't match the tested version."
     # Keep weights already there; replace only the code.
     if [ -d "$CODE" ]; then
@@ -116,15 +114,15 @@ if [ ! -x "$PY" ]; then
     "$UV" venv -q --python 3.12 --python-preference only-managed "$FOLDER/.venv" \
         || fail "could not set up Python 3.12."
 fi
-"$UV" pip install -q --python "$PY" -r "$LOCK" "$HERE"/wheels/*.whl \
+"$UV" pip install -q --python "$PY" --torch-backend cu128 -r "$LOCK" "$HERE"/wheels/*.whl \
     || fail "package install failed."
-"$PY" -c "import torch; assert torch.backends.mps.is_available()" 2>/dev/null \
-    || fail "PyTorch can't use $GPU on this Mac."
+"$PY" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null \
+    || fail "PyTorch can't use $GPU. Check the NVIDIA driver (nvidia-smi); 570 or later is recommended."
 rm -rf "$UV_CACHE_DIR"                      # downloaded packages, no longer needed
 echo "  Python $("$PY" -c 'import sys; print(sys.version.split()[0])'), PyTorch $("$PY" -c 'import torch; print(torch.__version__)')"
 
 # --- 4. weights ----------------------------------------------------------------
-verify_weights() { (cd "$CODE" && shasum -a 256 -c --quiet "$HERE/weights.sha256") > /dev/null 2>&1; }
+verify_weights() { (cd "$CODE" && $SHA256 -c --quiet "$HERE/weights.sha256") > /dev/null 2>&1; }
 if verify_weights; then
     say "Weights: already in place and checked"
 else
@@ -140,7 +138,7 @@ else
             || fail "weight download failed. Run this again to resume."
     fi
     say "Checking the weights"
-    (cd "$CODE" && shasum -a 256 -c --quiet "$HERE/weights.sha256") \
+    (cd "$CODE" && $SHA256 -c --quiet "$HERE/weights.sha256") \
         || fail "the weights don't match the tested version."
 fi
 

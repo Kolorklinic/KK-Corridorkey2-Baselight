@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------------
-# CorridorKey 2 for Resolve - worker  (v1.00)
+# CorridorKey 2 for Baselight - worker  (v1.00)
 #
 # From Creative Video Tips (CVT)
 # Created by Chadwick  |  https://creativevideotips.com
@@ -11,7 +11,8 @@
 #   1. Reads a job file (JSON) written by the plugin: a folder of source
 #      frames, optional hint frames, and where the results go.
 #   2. Loads CorridorKey 2.0 from its own model folder (unedited) on the
-#      Apple GPU, choosing the window size and precision for this Mac.
+#      NVIDIA GPU (CUDA), choosing the window size from the GPU memory that
+#      is free (Baselight may hold much of it) and CorridorKey's own table.
 #   3. Writes one RGBA EXR per frame to the cache (half float, DWAB 45):
 #      RGB = the keyed foreground in scene-linear light (no despill),
 #      A = the matte.
@@ -40,18 +41,7 @@ os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")   # before any cv2 import
 VERSION = "1.00"
 WINDOWS = (80, 40, 24, 16, 8, 4, 2, 1)
 
-# Peak memory on the Apple GPU, measured 2026-11-13 on M1/M2/M5 Max at HD
-# (model input 1920x1152): about 8 GB plus 0.95 GB per frame in the window.
-MEM_BASE_GB = 8.0
-MEM_PER_FRAME_GB = 0.95
-MEM_REF_PIXELS = 1920 * 1152
-MEM_USE_FRACTION = 0.85      # leave room for the host app
-# Intel Macs (AMD GPU, PyTorch 2.2, fp32), measured 2026-11-14 on a Radeon
-# RX 6700 XT (12 GB) at HD: 13.5 / 16.4 / 19.9 GB for windows of 2 / 4 / 8.
-# PyTorch lets MPS use up to 1.7x the VRAM (the rest spills to system RAM).
-if os.uname().machine == "x86_64":
-    MEM_BASE_GB = 12.0
-    MEM_PER_FRAME_GB = 1.1
+MEM_USE_FRACTION = 0.9       # of the GPU memory free when the job starts
 _T0 = time.time()
 
 
@@ -105,25 +95,10 @@ def close_window() -> None:
             pass
 
 
-def estimate_peak_gb(width: int, height: int, window: int) -> float:
-    scale = (width * height) / MEM_REF_PIXELS
-    return MEM_BASE_GB + MEM_PER_FRAME_GB * window * scale
-
-
 def padded_size(width: int, height: int, quantum: int = 128) -> tuple[int, int]:
     """CorridorKey pads the picture up to a multiple of 128."""
     up = lambda v: -(-v // quantum) * quantum
     return up(width), up(height)
-
-
-def choose_window(width: int, height: int, n_frames: int, budget_gb: float) -> int:
-    """Largest window whose estimated peak fits the budget (at least 1)."""
-    pw, ph = padded_size(width, height)
-    for w in WINDOWS:
-        eff = min(w, n_frames)
-        if estimate_peak_gb(pw, ph, eff) <= budget_gb:
-            return eff
-    return 1
 
 
 def chunk_starts(n_frames: int, chunk: int, stride: int) -> list[int]:
@@ -144,47 +119,66 @@ def chunk_of_frame(done: int, starts: list[int], chunk: int) -> int:
     return len(starts)
 
 
-def chip_generation(brand: str) -> int:
-    """'Apple M2 Max' -> 2; 0 when unknown."""
-    m = re.search(r"Apple M(\d+)", brand)
-    return int(m.group(1)) if m else 0
-
-
-def choose_precision(brand: str) -> str:
-    """bf16 on M5 and later (native support); fp16 is faster on M1-M4.
-    Intel Macs (AMD GPU, PyTorch 2.2): fp32, the only precision that works."""
-    if "Apple" not in brand:
-        return "fp32"
-    return "bf16" if chip_generation(brand) >= 5 else "fp16"
-
-
-def mac_brand() -> str:
+def machine_name() -> str:
+    """'NVIDIA RTX A6000 (AMD EPYC 7313 16-Core Processor)'."""
+    import torch
+    gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "no CUDA GPU"
+    cpu = ""
     try:
-        cpu = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
-                             capture_output=True, text=True).stdout.strip()
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    cpu = line.split(":", 1)[1].strip()
+                    break
     except OSError:
-        cpu = ""
-    if cpu and "Apple" not in cpu:             # Intel: name the GPU that does the work
-        import ck2_mps
-        gpu = ck2_mps.gpu_name()
-        if gpu:
-            return f"{gpu} ({cpu})"
-    return cpu
+        pass
+    return f"{gpu} ({cpu})" if cpu else gpu
 
 
-def available_system_gb() -> float:
-    """Free + inactive + purgeable + speculative memory, from vm_stat."""
-    try:
-        out = subprocess.run(["vm_stat"], capture_output=True, text=True).stdout
-    except OSError:
-        return float("inf")
-    page = int(re.search(r"page size of (\d+)", out).group(1))
-    pages = 0
-    for key in ("Pages free", "Pages inactive", "Pages purgeable", "Pages speculative"):
-        m = re.search(rf"{key}:\s+(\d+)", out)
-        if m:
-            pages += int(m.group(1))
-    return pages * page / 2**30
+def choose_precision() -> str:
+    """bf16 where the GPU has it (Ampere and later), else fp16."""
+    import torch
+    return "bf16" if torch.cuda.is_bf16_supported() else "fp16"
+
+
+def apply_precision(precision: str) -> None:
+    """CorridorKey asks for bf16 autocast; GPUs without bf16 get fp16 instead."""
+    import torch
+    if precision == "bf16":
+        return
+    dtype = torch.float16 if precision == "fp16" else None
+    base = torch.autocast
+
+    class Autocast(base):
+        def __init__(self, device_type, dtype_=None, enabled=True, cache_enabled=None, **kw):
+            dt = kw.pop("dtype", dtype_)
+            if device_type == "cuda":
+                if dtype is None:
+                    enabled = False
+                else:
+                    dt = dtype
+            super().__init__(device_type, dtype=dt, enabled=enabled, cache_enabled=cache_enabled)
+
+    torch.autocast = Autocast
+
+
+def vram_plan(model_dir: str, width: int, height: int, n_frames: int, window, budget_gb: float):
+    """(window, low_vram, needed GB) from CorridorKey's own NVIDIA memory table.
+    window: "auto" or a number of frames."""
+    if model_dir not in sys.path:
+        sys.path.insert(0, model_dir)
+    import corridorkey.runtime as rt
+    pw, ph = padded_size(width, height)
+    need = lambda est: est * rt._VRAM_MARGIN_SCALE + rt._VRAM_MARGIN_GB
+    if window == "auto":
+        chunk, _stride, low_vram, est = rt.select_vram_profile((ph, pw), n_frames, budget_gb)
+        return max(1, min(chunk, n_frames)), low_vram, need(est)
+    w = max(1, min(int(window), n_frames))
+    mp = pw * ph / 1e6
+    est = rt.estimate_peak_vram_gb(mp, w, False)
+    if need(est) <= budget_gb:
+        return w, False, need(est)
+    return w, True, need(rt.estimate_peak_vram_gb(mp, w, True))   # exact, slower, less memory
 
 
 def list_frames(folder: str) -> list[str]:
@@ -220,32 +214,28 @@ def frame_size(path: str) -> tuple[int, int]:
 
 
 def make_plan(job: dict, frames: list[str]) -> dict:
-    import ck2_mps
+    import torch
+    if not torch.cuda.is_available():
+        raise RuntimeError("PyTorch can't use the NVIDIA GPU (check the driver with nvidia-smi)")
     width, height = frame_size(frames[0])
-    brand = mac_brand()
-    gpu_gb = ck2_mps.usable_memory() / 2**30
-    budget = min(gpu_gb, available_system_gb()) * MEM_USE_FRACTION
-    if job["window"] == "auto":
-        window = choose_window(width, height, len(frames), budget)
-    else:
-        window = max(1, min(int(job["window"]), len(frames)))
-    precision = choose_precision(brand) if job["precision"] == "auto" else job["precision"]
-    pw, ph = padded_size(width, height)
+    free, total = torch.cuda.mem_get_info()
+    budget = free / 2**30 * MEM_USE_FRACTION
+    window, low_vram, need = vram_plan(job["model_dir"], width, height, len(frames), job["window"], budget)
+    precision = choose_precision() if job["precision"] == "auto" else job["precision"]
     starts = chunk_starts(len(frames), window, max(1, window // 2))
     return {
-        "mac": brand, "width": width, "height": height, "frames": len(frames),
-        "window": window, "stride": max(1, window // 2), "precision": precision,
-        "chunks": len(starts),
-        "gpu_gb": round(gpu_gb, 1), "budget_gb": round(budget, 1),
-        "estimate_gb": round(estimate_peak_gb(pw, ph, window), 1),
+        "mac": machine_name(), "width": width, "height": height, "frames": len(frames),
+        "window": window, "stride": max(1, window // 2), "low_vram": low_vram,
+        "precision": precision, "chunks": len(starts),
+        "gpu_gb": round(total / 2**30, 1), "budget_gb": round(budget, 1),
+        "estimate_gb": round(need, 1),
     }
 
 
 # --- the run (talks to CorridorKey) ----------------------------------------
 
 def run(job: dict, plan: dict, frames: list[str]) -> None:
-    import ck2_mps
-    ck2_mps.apply(plan["precision"])
+    apply_precision(plan["precision"])
 
     model_dir = job["model_dir"]
     sys.path.insert(0, model_dir)
@@ -311,7 +301,7 @@ def run(job: dict, plan: dict, frames: list[str]) -> None:
     emit("status", message="loading model")
     t0 = time.time()
     paths = rt.RuntimePaths.from_package(model_dir)
-    model = rt.load_model(paths, device="mps")
+    model = rt.load_model(paths, device="cuda")
     emit("status", message="model loaded", seconds=round(time.time() - t0, 1))
 
     hint = job["hint"]
@@ -323,6 +313,7 @@ def run(job: dict, plan: dict, frames: list[str]) -> None:
 
     cfg = rt.InferenceConfig(
         hann_chunk=plan["window"], hann_stride=plan["stride"], auto_vram=False,
+        low_vram=bool(plan["low_vram"]),
         carry_hint=bool(hint["carry"]), hint_quality=float(hint["strength"]),
         carry_hint_quality=float(hint["strength"]),
         outputs={"alpha", "fg"}, temp_dir=work / "tmp",
@@ -340,25 +331,25 @@ def run(job: dict, plan: dict, frames: list[str]) -> None:
     if done["n"] != total or pending:
         raise RuntimeError(f"CorridorKey finished {done['n']} of {total} frames")
     shutil.rmtree(work, ignore_errors=True)
-    emit("cpu_fallbacks", **ck2_mps.CPU_FALLBACKS)
 
 
 def check(model_dir: str) -> None:
-    """Loads CorridorKey on the Apple GPU once and reports what this Mac would use."""
+    """Loads CorridorKey on the NVIDIA GPU once and reports what this computer would use."""
     import torch
-    import ck2_mps
-    brand = mac_brand()
-    precision = choose_precision(brand)
-    ck2_mps.apply(precision)
+    if not torch.cuda.is_available():
+        raise RuntimeError("PyTorch can't use the NVIDIA GPU (check the driver with nvidia-smi)")
+    precision = choose_precision()
+    apply_precision(precision)
     sys.path.insert(0, model_dir)
     import corridorkey.runtime as rt
     t0 = time.time()
-    model = rt.load_model(rt.RuntimePaths.from_package(model_dir), device="mps")
-    gpu_gb = ck2_mps.usable_memory() / 2**30
+    model = rt.load_model(rt.RuntimePaths.from_package(model_dir), device="cuda")
     del model
-    emit("check", ok=True, mac=brand, precision=precision, gpu_gb=round(gpu_gb, 1),
-         hd_window=choose_window(1920, 1080, 10**6, gpu_gb * MEM_USE_FRACTION),
-         load_seconds=round(time.time() - t0, 1))
+    torch.cuda.empty_cache()
+    free, total = torch.cuda.mem_get_info()
+    window, low_vram, _ = vram_plan(model_dir, 1920, 1080, 10**6, "auto", free / 2**30 * MEM_USE_FRACTION)
+    emit("check", ok=True, mac=machine_name(), precision=precision, gpu_gb=round(total / 2**30, 1),
+         hd_window=window, low_vram=low_vram, load_seconds=round(time.time() - t0, 1))
 
 
 def main(argv: list[str]) -> int:

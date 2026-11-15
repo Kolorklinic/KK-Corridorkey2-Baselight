@@ -54,10 +54,12 @@ std::shared_ptr<Job> Job::start(const std::string& python, const std::string& wo
         std::string("HOME=") + (home ? home : ""),
         "PATH=/usr/bin:/bin:/usr/sbin:/sbin",
         "LANG=en_US.UTF-8",
-        "PYTORCH_ENABLE_MPS_FALLBACK=1",
         "PYTHONNOUSERSITE=1",
     };
-    if (const char* tmp = std::getenv("TMPDIR")) env.push_back(std::string("TMPDIR=") + tmp);
+    // The progress window needs the desktop session; CUDA_VISIBLE_DEVICES picks the GPU.
+    for (const char* key : {"TMPDIR", "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                            "CUDA_VISIBLE_DEVICES"})
+        if (const char* v = std::getenv(key)) env.push_back(std::string(key) + "=" + v);
     std::vector<char*> envp;
     for (auto& e : env) envp.push_back(e.data());
     envp.push_back(nullptr);

@@ -1,12 +1,12 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# CorridorKey 2 for Resolve - build
+# CorridorKey 2 for Baselight - build
 # From Creative Video Tips (CVT)  |  https://creativevideotips.com
 # Licence: CC BY-NC-SA 4.0 with the CorridorKey additional terms (see LICENSE).
 #
 # Builds build/CorridorKey2.ofx.bundle and runs the tests.
 #   ./build.sh            build + C++ tests + EXR check against Python/OpenCV
-# Needs the Xcode Command Line Tools and cmake (brew install cmake).
+# Needs a C++17 compiler, cmake, curl and uv (see .github/workflows/build.yml).
 # ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -14,33 +14,37 @@ cd "$(dirname "$0")"
 VERSION=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' worker/ck2_worker.py)
 CXX_VERSION=$(sed -n 's/.*kVersion = "\(.*\)";/\1/p' src/ck2_core.h)
 [ "$VERSION" = "$CXX_VERSION" ] || { echo "Version mismatch: worker $VERSION, plugin $CXX_VERSION"; exit 1; }
-echo "== CorridorKey 2 for Resolve $VERSION"
+echo "== CorridorKey 2 for Baselight $VERSION"
 
 third_party/build_openexr.sh
 cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release > /dev/null
-LOG=$(cmake --build build/cmake -j 8 2>&1) || { echo "$LOG" | grep -E 'error' ; exit 1; }
+LOG=$(cmake --build build/cmake -j "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" 2>&1) || { echo "$LOG" | tail -80; exit 1; }
 echo "$LOG" | grep -E '(src|tests)/.*(warning|error)' || true   # our own code only
 
 B=build/CorridorKey2.ofx.bundle
+# OFX bundle layout: Linux-x86-64 on Linux (the target); MacOS for a macOS
+# development build, where only the tests matter.
+if [ "$(uname)" = "Darwin" ]; then ARCHDIR=MacOS; else ARCHDIR=Linux-x86-64; fi
 rm -rf "$B"
-mkdir -p "$B/Contents/MacOS" "$B/Contents/Resources/worker"
-cp build/cmake/CorridorKey2.ofx "$B/Contents/MacOS/"
-cp worker/ck2_worker.py worker/ck2_mps.py worker/ck2_progress.py "$B/Contents/Resources/worker/"
+mkdir -p "$B/Contents/$ARCHDIR" "$B/Contents/Resources/worker"
+cp build/cmake/CorridorKey2.ofx "$B/Contents/$ARCHDIR/"
+cp worker/ck2_worker.py worker/ck2_progress.py "$B/Contents/Resources/worker/"
 # Model setup, with its own copy of uv (MIT / Apache-2.0) so nothing else is needed.
-UV_BIN=$(readlink -f "$(command -v uv)")
-UV_DIR=$(dirname "$(dirname "$UV_BIN")")
+# UV_BIN / UV_LICENSES override where uv and its licence files are found.
+UV_BIN=${UV_BIN:-$(readlink -f "$(command -v uv)")}
+UV_LICENSES=${UV_LICENSES:-$(dirname "$(dirname "$UV_BIN")")}
 mkdir -p "$B/Contents/Resources/setup/bin" "$B/Contents/Resources/setup/wheels"
-cp setup/ck2_setup.sh "setup/Install CorridorKey Model.command" setup/requirements-lock.txt \
-   setup/requirements-lock-intel.txt \
+cp setup/ck2_setup.sh setup/install_model.sh setup/requirements-lock-linux.txt \
    setup/corridorkey_files.sha256 setup/weights.sha256 "$B/Contents/Resources/setup/"
+chmod 755 "$B/Contents/Resources/setup/ck2_setup.sh" "$B/Contents/Resources/setup/install_model.sh"
 cp setup/wheels/*.whl "$B/Contents/Resources/setup/wheels/"
 cp "$UV_BIN" "$B/Contents/Resources/setup/bin/uv"
 chmod 755 "$B/Contents/Resources/setup/bin/uv"
-cp "$UV_DIR/LICENSE-MIT" "$B/Contents/Resources/setup/bin/uv-LICENSE-MIT"
-cp "$UV_DIR/LICENSE-APACHE" "$B/Contents/Resources/setup/bin/uv-LICENSE-APACHE"
+cp "$UV_LICENSES/LICENSE-MIT" "$B/Contents/Resources/setup/bin/uv-LICENSE-MIT"
+cp "$UV_LICENSES/LICENSE-APACHE" "$B/Contents/Resources/setup/bin/uv-LICENSE-APACHE"
 echo "   (bundled $("$UV_BIN" --version | cut -d' ' -f1-2))"
 cp LICENSE THIRD_PARTY_NOTICES.md "$B/Contents/Resources/"
-# The effect's icon in the Effects library: the CVT logo, named after the plugin ID.
+# The effect's icon in the effects list, named after the plugin ID.
 cp installer/com.creativevideotips.corridorkey2.png "$B/Contents/Resources/"
 cp third_party/openfx/LICENSE.md "$B/Contents/Resources/OpenFX-LICENSE.md"
 cp build/deps/install/*-LICENSE.* build/deps/install/*-COPYING.* "$B/Contents/Resources/"
@@ -49,7 +53,13 @@ sed "s/@VERSION@/$VERSION/g" installer/Info.plist > "$B/Contents/Info.plist"
 chmod -R u+rwX,go+rX,go-w "$B"
 UNREADABLE=$(find "$B" ! -perm -o+r)
 [ -z "$UNREADABLE" ] || { echo "Not readable by other users:"; echo "$UNREADABLE"; exit 1; }
-codesign --force --sign - "$B" > /dev/null 2>&1   # ad hoc; package.sh will sign properly
+if [ "$ARCHDIR" = "Linux-x86-64" ]; then
+    # Only the two OFX entry points may be exported.
+    EXPORTS=$(nm -D --defined-only "$B/Contents/$ARCHDIR/CorridorKey2.ofx" | awk '$2 ~ /[TW]/ {print $3}' | sort | tr '\n' ' ')
+    [ "$EXPORTS" = "OfxGetNumberOfPlugins OfxGetPlugin " ] || { echo "Unexpected exports: $EXPORTS"; exit 1; }
+else
+    codesign --force --sign - "$B" > /dev/null 2>&1   # ad hoc
+fi
 
 echo "== Tests"
 build/cmake/ck2_tests

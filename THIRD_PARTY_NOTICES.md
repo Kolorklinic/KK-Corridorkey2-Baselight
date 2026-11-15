@@ -18,7 +18,7 @@ Each of these keeps its own licence. Their licence files are inside the plugin, 
 
 ## Downloaded by Install Model, not included
 
-Install Model downloads these onto the user's Mac from their publishers' own pages, after the user accepts the CorridorKey licence. They are not part of this repository or the plugin package, and each stays under its own licence.
+Install Model downloads these onto the user's computer from their publishers' own pages, after the user accepts the CorridorKey licence. They are not part of this repository or the plugin package, and each stays under its own licence.
 
 | Component | From | Licence |
 |---|---|---|
@@ -26,4 +26,4 @@ Install Model downloads these onto the user's Mac from their publishers' own pag
 | C-RADIOv4-SO400M, by NVIDIA | [Hugging Face](https://huggingface.co/nvidia/C-RADIOv4-SO400M) | NVIDIA Open Model License. Licensed by NVIDIA Corporation under the NVIDIA Open Model License. |
 | MoGe-2 ViT-B, by Microsoft | [Hugging Face](https://huggingface.co/Ruicheng/moge-2-vitb-normal) | MIT |
 | RVM small, by Google DeepMind | Google Cloud Storage | CC BY 4.0 (weights) |
-| Python 3.12 and packages such as PyTorch | uv's Python builds and PyPI | their own licences |
+| Python 3.12 and packages such as PyTorch (CUDA 12.8 build) | uv's Python builds, PyPI and download.pytorch.org | their own licences |

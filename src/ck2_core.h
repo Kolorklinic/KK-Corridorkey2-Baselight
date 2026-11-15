@@ -231,11 +231,37 @@ inline bool readThumb(const std::string& path, std::vector<float>& t) {
 // returns, so the range must never go past the clip.
 inline bool processRange(double clipFirst, double clipLast, double hostFirst, double hostLast,
                          bool useFirstLast, int firstFrame, int lastFrame, long& first, long& last) {
+    // Some hosts (Baselight) can't tell a plugin how long its clip is: they
+    // report an empty, infinite or absurd range. The range then comes from
+    // the timeline bounds, else from First/Last Frame, else there is none.
+    const double kMaxSpan = 1e7;
+    auto usable = [&](double a, double b) {
+        return std::isfinite(a) && std::isfinite(b) && b >= a && b - a < kMaxSpan;
+    };
+    const bool clipKnown = usable(clipFirst, clipLast);
+    const bool hostKnown = usable(hostFirst, hostLast) && hostLast > hostFirst;
+    if (!clipKnown) {
+        if (hostKnown) {
+            first = std::lround(hostFirst);
+            last = static_cast<long>(std::floor(hostLast + 1e-6));
+        } else if (useFirstLast) {
+            first = firstFrame;
+            last = lastFrame;
+            return last >= first;
+        } else {
+            return false;
+        }
+        if (useFirstLast) {
+            first = std::max(first, static_cast<long>(firstFrame));
+            last = std::min(last, static_cast<long>(lastFrame));
+        }
+        return last >= first;
+    }
     // Fusion reports a clip's range as e.g. [1001, 1023.9999]: frames 1001 to
     // 1023. Rounding the end would ask for 1024, which the clip doesn't have.
     first = static_cast<long>(std::ceil(clipFirst - 1e-6));
     last = static_cast<long>(std::floor(clipLast + 1e-6));
-    if (hostLast > hostFirst) {
+    if (hostKnown) {
         // Resolve can report the timeline's end one frame short when the clip's
         // frame rate differs from the timeline's (a 29.97 clip on a 23.976
         // timeline: comp 1001-1094, bounds 1001-1093). Allow one frame past it,
