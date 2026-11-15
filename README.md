@@ -5,7 +5,7 @@
 By KolorKlinic. Free and unofficial: not made or endorsed by Corridor Digital or FilmLight.
 
 > [!WARNING]
-> **Experimental.** A first user test in Baselight (2026-11-15) confirmed that the plugin **loads and appears in Baselight**, and reported processing as **slow**. Which Baselight version, GPU and speed haven't been reported yet, and nothing else has been tested in Baselight. Every build is also checked automatically on Linux (it compiles, its tests pass, it loads as an OFX plugin, and its Python packages install). If you try it, please [open an issue](../../issues) with what happened, your Baselight version, your GPU and driver (`nvidia-smi`), seconds per HD frame, and the logs (see *Troubleshooting*).
+> **Experimental.** A first user test in Baselight (2026-11-15) confirmed that the plugin **loads and appears in Baselight**. A first run was slow; a later one (same day) **keyed properly at a normal speed**. Which Baselight version, GPU and seconds per frame haven't been reported yet, nor how the colours come back with 1.02's linear Rec.709 exchange. Every build is also checked automatically on Linux (it compiles, its tests pass, it loads as an OFX plugin, and its Python packages install). If you try it, please [open an issue](../../issues) with what happened, your Baselight version, your GPU and driver (`nvidia-smi`), seconds per HD frame, and the logs (see *Troubleshooting*).
 
 ![A man in front of a green screen, and the same frame keyed by CorridorKey 2 over a checkerboard](corridorkey2_example.jpg)
 
@@ -53,10 +53,10 @@ Baselight renders on the node, while **Process** runs where you press it. The no
 
 ## Known unknowns
 
-Confirmed so far: the plugin loads and appears in Baselight. Still to be reported:
+Confirmed so far: the plugin loads and appears in Baselight, and Process keys properly at a normal speed. Still to be reported:
 
 - whether Status and the redraw after Process update while Baselight is open;
-- how fast it keys, and on which GPU;
+- how fast it keys in seconds per frame, and on which GPU;
 - whether Baselight converts to and from the scene-linear Rec.709 the plugin asks for (1.02 and later; 1.00 and 1.01 asked for display Rec.709).
 
 ### If it's slow
