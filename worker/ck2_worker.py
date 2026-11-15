@@ -65,6 +65,11 @@ def emit(event: str, **fields) -> None:
     line = json.dumps(fields) + "\n"
     sys.__stdout__.write(line)
     sys.__stdout__.flush()
+    if event != "progress":
+        # Also in worker.log (stderr) for troubleshooting: the plan (GPU memory
+        # free, frames per chunk, low-VRAM mode), the result and any error.
+        sys.__stderr__.write("[ck2] " + line)
+        sys.__stderr__.flush()
     if _WINDOW is not None and _WINDOW.poll() is None:
         try:
             _WINDOW.stdin.write(line)

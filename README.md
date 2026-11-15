@@ -61,7 +61,7 @@ Confirmed so far: the plugin loads and appears in Baselight. Still to be reporte
 
 ### If it's slow
 
-CorridorKey is heavy on any GPU; Corridor's own figures are about a second per HD frame on the fastest cards. Inside Baselight it can be slower, because Baselight keeps much of the GPU's memory for itself and CorridorKey only gets what is left. With little memory free, it keys fewer frames at once or switches to its low-memory mode, which gives the same result more slowly. To see what it used, look for the `"event": "plan"` line in `~/.cache/cvt-corridorkey2/logs/worker.log`: `budget_gb` is the GPU memory it found free, `window` the frames keyed together, and `low_vram` whether it used the low-memory mode. A GPU with more memory, or less held by Baselight, keys faster.
+CorridorKey is heavy on any GPU; Corridor's own figures are about a second per HD frame on the fastest cards. Inside Baselight it can be slower, because Baselight keeps much of the GPU's memory for itself and CorridorKey only gets what is left. With little memory free, it keys fewer frames at once or switches to its low-memory mode, which gives the same result more slowly. To see what it used, look for the `[ck2] {... "event": "plan"}` line in `~/.cache/cvt-corridorkey2/logs/worker.log` (builds after v1.00-baselight): `budget_gb` is the GPU memory it found free, `window` the frames keyed together, and `low_vram` whether it used the low-memory mode. A GPU with more memory, or less held by Baselight, keys faster.
 
 ## Troubleshooting
 
