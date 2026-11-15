@@ -12,7 +12,7 @@ By KolorKlinic. Free and unofficial: not made or endorsed by Corridor Digital or
 ## What you need
 
 - **Linux x86_64**, RHEL/Rocky 8 or later (glibc 2.28+), with a desktop session (Install Model opens a terminal window; Process shows a progress window).
-- **An NVIDIA GPU** with an NVIDIA driver 570 or later (`nvidia-smi` shows it). CorridorKey runs with PyTorch 2.9.1 for CUDA 12.8, the versions Corridor Digital tests it with. GPU memory sets how many frames are keyed together; 12 GB or more is a sensible minimum at HD.
+- **An NVIDIA RTX 30-series GPU or newer** (or the professional cards of the same generations, such as RTX A-series and RTX Ada), with an NVIDIA driver 570 or later (`nvidia-smi` shows it). This is what Corridor Digital supports. Older cards (GTX 10 and RTX 20 series) lack the bf16 precision CorridorKey uses; the plugin falls back to fp16 on them, but that is untested and may be slow or give different results. CorridorKey runs with PyTorch 2.9.1 for CUDA 12.8, the versions Corridor Digital tests it with. GPU memory sets how many frames are keyed together; 12 GB or more is a sensible minimum at HD.
 - **Baselight** with OFX support. Which versions work is unknown so far.
 - **About 15 GB of disk** for CorridorKey, its weights and its Python, plus about 2.5 MB for each processed HD frame.
 - **Internet access once,** for Install Model.
