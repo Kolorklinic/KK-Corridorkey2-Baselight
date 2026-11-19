@@ -12,17 +12,32 @@
 #include <ImfHeader.h>
 #include <ImfInputFile.h>
 #include <ImfOutputFile.h>
+#include <ImfThreading.h>
 #include <Imath/half.h>
 
 #include <cstddef>
 #include <cstdio>
 #include <exception>
+#include <mutex>
+
+#include "ck2_core.h"
 
 namespace ck2 {
+
+namespace {
+// OpenEXR decodes and encodes DWAB blocks on its own thread pool, but only
+// once it is given threads (it has none by default): a 4K frame reads in about
+// 14 ms instead of 84.
+void useThreads() {
+    static std::once_flag once;
+    std::call_once(once, [] { Imf::setGlobalThreadCount(workerCount()); });
+}
+}  // namespace
 
 bool writeExr(const std::string& path, const float* rgba, int width, int height,
               long rowStride, std::string& error, bool withAlpha) {
     if (width <= 0 || height <= 0) { error = "empty image"; return false; }
+    useThreads();
     const std::string tmp = path + ".part.exr";
     try {
         const int nch = withAlpha ? 4 : 3;
@@ -67,13 +82,17 @@ bool writeExr(const std::string& path, const float* rgba, int width, int height,
 
 bool readExrRGBA(const std::string& path, ImageRGBA& out, std::string& error) {
     try {
+        useThreads();
         Imf::InputFile file(path.c_str());
         const Imath::Box2i dw = file.header().dataWindow();
         const int w = dw.max.x - dw.min.x + 1, h = dw.max.y - dw.min.y + 1;
         if (w <= 0 || h <= 0) { error = "empty EXR"; return false; }
         out.width = w;
         out.height = h;
-        out.pixels.assign(static_cast<size_t>(w) * h * 4, 0.0f);
+        // Reused between frames (no 140 MB clear per 4K frame); channels a
+        // file lacks are filled by the slices' fill values below.
+        if (out.pixels.size() != static_cast<size_t>(w) * h * 4)
+            out.pixels.resize(static_cast<size_t>(w) * h * 4);
         const size_t xs = sizeof(float) * 4, ys = xs * w;
         // Slices are addressed by data-window coordinates.
         char* base = reinterpret_cast<char*>(out.pixels.data()) -

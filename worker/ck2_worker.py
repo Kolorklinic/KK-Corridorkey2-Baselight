@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------------
-# CorridorKey 2 for Baselight - worker  (v1.02)
+# CorridorKey 2 for Baselight - worker  (v1.03)
 #
 # From Creative Video Tips (CVT)
 # Created by Chadwick  |  https://creativevideotips.com
@@ -38,7 +38,7 @@ from pathlib import Path
 
 os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")   # before any cv2 import
 
-VERSION = "1.02"
+VERSION = "1.03"
 WINDOWS = (80, 40, 24, 16, 8, 4, 2, 1)
 
 MEM_USE_FRACTION = 0.9       # of the GPU memory free when the job starts

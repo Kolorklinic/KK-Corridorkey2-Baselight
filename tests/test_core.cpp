@@ -84,6 +84,105 @@ static void unitTests() {
     CHECK(near(mr, 0.7f, 1e-4f) && near(mg, 0.2f, 1e-4f) && near(mb, 0.05f, 1e-4f));
     look.input = ck2::InputSpace::Display;
 
+    // Log curves (1.02): 18% grey lands on each maker's published code value
+    // (Canon: on Resolve's, measured 2026-11-16).
+    {
+        using C = ck2::Curve;
+        struct G { C c; double grey; double tol; };
+        const G greys[] = {{C::ACEScct, 0.4135884, 1e-5}, {C::DaVinciIntermediate, 0.336043, 1e-5},
+                           {C::BmdFilmGen5, 0.383562, 1e-4}, {C::SLog3, 420.0 / 1023.0, 1e-6},
+                           {C::LogC3, 0.391007, 1e-5}, {C::LogC4, 0.278396, 1e-5},
+                           {C::VLog, 0.423311, 1e-5}, {C::CanonLog2, 0.38784, 2e-5},
+                           {C::CanonLog3, 0.33096, 2e-5}, {C::RedLog3G10, 1.0 / 3.0, 1e-5},
+                           {C::AppleLog, 0.488272, 1e-5}, {C::DjiDLog, 0.398765, 1e-5},
+                           {C::DLogMPocket3, 0.400, 2e-3}, {C::DLogMAction5, 0.350, 2e-3}};
+        for (const G& g : greys) {
+            CHECK(std::fabs(ck2::encodeCurve(g.c, 0.18) - g.grey) < g.tol);
+            // Encode and decode undo each other, from deep shadow to bright highlight
+            // (and a little below black).
+            for (double x : {-0.01, 0.0, 0.001, 0.005, 0.0105, 0.012, 0.05, 0.18, 1.0, 5.0, 40.0}) {
+                const double back = ck2::decodeCurve(g.c, ck2::encodeCurve(g.c, x));
+                CHECK(std::fabs(back - x) < 1e-6 * std::max(1.0, std::fabs(x)));
+            }
+            // No jump where the formula changes piece: small steps give small changes.
+            for (double t = 0.0; t < 1.0; t += 0.0005) {
+                const double d = std::fabs(ck2::decodeCurve(g.c, t + 0.0005) - ck2::decodeCurve(g.c, t));
+                CHECK(d < 0.05 * std::max(1.0, ck2::decodeCurve(g.c, t)));
+            }
+        }
+    }
+    // Gamuts: white stays white (all D65), the two matrices undo each other,
+    // and Rec.709 primaries themselves come out unchanged from a Rec.709 "gamut".
+    for (int i = 0; i < ck2::kInputSpaceCount; ++i) {
+        const auto s = static_cast<ck2::InputSpace>(i);
+        const ck2::SpaceConversion& cv = ck2::conversion(s);
+        float r = 1.0f, g = 1.0f, b = 1.0f;
+        if (cv.matrix) ck2::applyMatrix(cv.toRec709, r, g, b);
+        CHECK(near(r, 1.0f, 2e-3f) && near(g, 1.0f, 2e-3f) && near(b, 1.0f, 2e-3f));
+        r = 0.6f; g = 0.3f; b = 0.1f;
+        ck2::toModelSpace(cv, r, g, b);
+        ck2::fromModelSpace(cv, r, g, b);
+        CHECK(near(r, 0.6f, 1e-4f) && near(g, 0.3f, 1e-4f) && near(b, 0.1f, 1e-4f));
+        CHECK(ck2::inputIsLinear(s) == (s != ck2::InputSpace::Display));
+    }
+    {
+        double m[9], inv[9], id[9];
+        ck2::rgbToXyz(ck2::kRec709, m);
+        CHECK(std::fabs(m[3] - 0.212639) < 1e-5 && std::fabs(m[4] - 0.715169) < 1e-5);   // Rec.709 luma
+        ck2::invert3(m, inv);
+        ck2::mul3(m, inv, id);
+        for (int k = 0; k < 9; ++k) CHECK(std::fabs(id[k] - (k % 4 == 0 ? 1.0 : 0.0)) < 1e-9);
+        // S-Gamut3.Cine -> Rec.709, row 1 as published by Sony / colour-science.
+        const ck2::SpaceConversion& sg = ck2::conversion(ck2::InputSpace::SLog3);
+        CHECK(near(sg.toRec709[0], 1.6269474f, 2e-3f) && near(sg.toRec709[1], -0.5401385f, 2e-3f) &&
+              near(sg.toRec709[2], -0.0868089f, 2e-3f));
+    }
+    // S-Log3 grey in, through the model's space and back: same code value out.
+    look.input = ck2::InputSpace::SLog3;
+    look.output = ck2::Output::Foreground;
+    {
+        float px[3] = {static_cast<float>(420.0 / 1023.0), static_cast<float>(420.0 / 1023.0),
+                       static_cast<float>(420.0 / 1023.0)};
+        ck2::toModelSpace(ck2::conversion(look.input), px[0], px[1], px[2]);
+        CHECK(near(px[0], 0.18f, 1e-4f) && near(px[2], 0.18f, 1e-4f));
+        ck2::composePixel(look, px, 1.0f, src, out);
+        CHECK(near(out[0], 420.0f / 1023.0f, 1e-4f) && near(out[1], 420.0f / 1023.0f, 1e-4f));
+    }
+    look.input = ck2::InputSpace::Display;
+    look.output = ck2::Output::Premultiplied;
+    // DaVinci Wide Gamut Linear (1.03): no curve, DWG primaries; a DWG grey stays
+    // grey, and pure DWG red is wider than Rec.709 (negative green and blue).
+    {
+        const ck2::SpaceConversion& d = ck2::conversion(ck2::InputSpace::DwgLinear);
+        CHECK(d.curve == ck2::Curve::Linear && d.matrix);
+        const ck2::SpaceConversion& di = ck2::conversion(ck2::InputSpace::DaVinciIntermediate);
+        for (int k = 0; k < 9; ++k) CHECK(near(d.toRec709[k], di.toRec709[k], 1e-7f));
+        float r = 0.18f, g = 0.18f, b = 0.18f;
+        ck2::toModelSpace(d, r, g, b);
+        CHECK(near(r, 0.18f, 1e-3f) && near(g, 0.18f, 1e-3f) && near(b, 0.18f, 1e-3f));
+        r = 1.0f; g = 0.0f; b = 0.0f;
+        ck2::toModelSpace(d, r, g, b);
+        CHECK(r > 1.0f && g < 0.0f);
+    }
+    // 1.00's three spaces keep their cache names (Rec.709 = 0 + 10 in the hash).
+    {
+        uint32_t h = 2166136261u;
+        for (int v : {10, 16, 0, 2, 0, 0, 0}) { h ^= static_cast<uint32_t>(v); h *= 16777619u; }
+        CHECK(ck2::settingsHash(ck2::InputSpace::Display, 16, 0) == h);
+    }
+    // Menu order (1.06, Chadwick's): linear first, then the logs.
+    CHECK(static_cast<int>(ck2::InputSpace::DwgLinear) == 3 &&
+          static_cast<int>(ck2::InputSpace::DaVinciIntermediate) == 4 &&
+          static_cast<int>(ck2::InputSpace::SLog3) == 5 &&
+          static_cast<int>(ck2::InputSpace::BmdFilmGen5) == 6 &&
+          static_cast<int>(ck2::InputSpace::RedLog3G10) == 10 &&
+          static_cast<int>(ck2::InputSpace::VLog) == ck2::kInputSpaceCount - 1);
+    // New spaces get their own cache names.
+    for (int i = 0; i < ck2::kInputSpaceCount; ++i)
+        for (int k = i + 1; k < ck2::kInputSpaceCount; ++k)
+            CHECK(ck2::settingsHash(static_cast<ck2::InputSpace>(i), 16, 0) !=
+                  ck2::settingsHash(static_cast<ck2::InputSpace>(k), 16, 0));
+
     // Names and JSON.
     CHECK(ck2::cacheFileName(12, 0xabcdef01u) == "f0000012_abcdef01.exr");
     using I = ck2::InputSpace;
@@ -159,6 +258,32 @@ static void unitTests() {
     std::vector<float> noisy = big;
     for (size_t i = 0; i < noisy.size(); i += 4) noisy[i] += ((i / 4) % 7) * 0.002f;   // decode noise
     CHECK(ck2::thumbDiff(t1, ck2::makeThumb(noisy.data(), 640, 360, 640 * 4)) < ck2::kThumbChanged);
+    // Threads (1.01): every row exactly once, and the threaded thumbnail
+    // equals the single-thread one (odd size, bottom-up rows).
+    for (int n : {1, 15, 16, 17, 359, 2160}) {
+        std::vector<int> hits(n, 0);
+        ck2::parallelBands(n, 16, [&](int a, int b) { for (int i = a; i < b; ++i) ++hits[i]; });
+        CHECK(std::all_of(hits.begin(), hits.end(), [](int v) { return v == 1; }));
+    }
+    {
+        const int w = 641, h = 359;
+        std::vector<float> pic(static_cast<size_t>(w) * h * 4);
+        for (size_t i = 0; i < pic.size(); ++i) pic[i] = static_cast<float>((i * 2654435761u) % 1000) / 999.0f;
+        const float* top = &pic[static_cast<size_t>(h - 1) * w * 4];
+        const long stride = -static_cast<long>(w) * 4;
+        std::vector<double> acc(ck2::kThumbW * ck2::kThumbH * 3, 0.0);
+        std::vector<int> cnt(ck2::kThumbW * ck2::kThumbH, 0);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const int t = (y * ck2::kThumbH / h) * ck2::kThumbW + x * ck2::kThumbW / w;
+                for (int c = 0; c < 3; ++c) acc[t * 3 + c] += top[stride * y + x * 4 + c];
+                ++cnt[t];
+            }
+        std::vector<float> ref(acc.size());
+        for (size_t i = 0; i < ref.size(); ++i) ref[i] = static_cast<float>(acc[i] / cnt[i / 3]);
+        CHECK(ck2::makeThumb(top, w, h, stride) == ref);
+    }
+
     std::string tp = path + ".thumb";
     std::vector<float> back;
     CHECK(ck2::writeThumb(tp, t1) && ck2::readThumb(tp, back) && back == t1);
@@ -220,6 +345,22 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc == 6 && std::string(argv[1]) == "job") return runJob(argv[2], argv[3], argv[4], argv[5]);
+    // For tests/colour_check.py: "r g b" lines on stdin, converted with the
+    // plugin's own code. encode: linear Rec.709 -> Input Is space <n> (what the
+    // output does); decode: the other way (what Process does to the source).
+    if (argc == 4 && std::string(argv[1]) == "convert") {
+        const int n = std::atoi(argv[2]);
+        if (n < 0 || n >= ck2::kInputSpaceCount) return 2;
+        const bool encode = std::string(argv[3]) == "encode";
+        const ck2::SpaceConversion& cv = ck2::conversion(static_cast<ck2::InputSpace>(n));
+        float r, g, b;
+        while (std::scanf("%f %f %f", &r, &g, &b) == 3) {
+            if (encode) ck2::fromModelSpace(cv, r, g, b);
+            else ck2::toModelSpace(cv, r, g, b);
+            std::printf("%.9g %.9g %.9g\n", r, g, b);
+        }
+        return 0;
+    }
     if (argc == 3 && std::string(argv[1]) == "write") {
         auto px = pattern(7, 5);
         std::string err;

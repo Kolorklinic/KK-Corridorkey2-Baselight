@@ -1,5 +1,11 @@
 # CorridorKey 2 for Baselight: changelog
 
+- 1.03 (2026-11-19): brought up to Creative Video Tips' 1.06. Faster
+  playback once a shot is processed: reading the stored results and drawing
+  the frame use every CPU core (a 4K frame in about 30 ms instead of about
+  180 ms). ACEScg uses the same white point adaptation as Resolve (CAT02);
+  nodes set to ACEScg need a new Process. Input Is keeps its three choices,
+  since Baselight converts the working space to linear Rec.709 itself.
 - 1.02 (2026-11-15): colour management. The plugin asks Baselight for
   scene-linear Rec.709 instead of display Rec.709, so Baselight converts
   the working space (E-Gamut, ACES...) to it and back by itself, highlights
@@ -14,9 +20,49 @@
   with NVIDIA GPUs: Linux build, CorridorKey on CUDA (PyTorch 2.9.1 for
   CUDA 12.8), frame range without a clip length, Rec.709 from Baselight.
 
-Earlier versions: CorridorKey 2 for Resolve by Creative Video Tips.
+Earlier versions, and Creative Video Tips' changes up to 1.06 (some are for
+Resolve only): CorridorKey 2 for Resolve by Creative Video Tips.
 
 
+- 1.06 (2026-11-16): new Input Is choices: Apple Log (Rec.2020), Apple Log 2
+  (Apple Gamut), DJI D-Log M for the Osmo Pocket 3 and the Osmo Action 5 (fits
+  to real footage by Thatcher Freeman, used with his permission) and DJI D-Log
+  (D-Gamut). New menu order, linear choices first: Rec.709, sRGB Linear, ACEScg,
+  DWG Linear, DWG / DaVinci Intermediate, Sony S-Log3, Blackmagic Film Gen 5,
+  ACEScct, ARRI LogC3, ARRI LogC4, RED, Canon Log 2, Canon Log 3, Apple Log,
+  Apple Log 2, DJI D-Log M (Pocket 3), DJI D-Log M (Action 5), DJI D-Log,
+  Panasonic V-Log. Nodes set to a choice below ACEScg in 1.02 to 1.05 need it
+  picked again, and a new Process.
+- 1.05 (2026-11-16): every Input Is choice now matches Resolve's own Color
+  Space Transform (checked on a 50-patch chart, within 0.00002). ACEScg and
+  ACEScct use the same white point adaptation as Resolve (CAT02); Canon Log 2
+  and Canon Log 3 no longer scale by 0.9 (Resolve doesn't), so Canon grey was
+  about 1% too bright before. Nodes set to ACEScg, ACEScct or a Canon log
+  need a new Process.
+- 1.04 (2026-11-16): colour fixes, checked against the colour-science
+  library (every curve and gamut now matches): Canon Log 2 had its 18% grey
+  slightly too bright, and Blackmagic Wide Gamut used rounded primaries.
+  Input Is in a new order, with the most used first: Rec.709, sRGB Linear,
+  ACEScg, DaVinci Wide Gamut / DaVinci Intermediate, DWG Linear, Sony S-Log3,
+  Blackmagic Film Gen 5, then the rest. Nodes set to one of the log choices in
+  1.02 or 1.03 need it picked again, and a new Process. Cache Format is gone:
+  Zip was no faster than DWAB inside Resolve.
+- 1.03 (2026-11-16): Input Is has DaVinci Wide Gamut Linear, what the Fusion
+  page gets in a DaVinci colour-managed project. New Cache Format in Cache:
+  DWAB (as before) or Zip, lossless and about 3 times larger, which reads back
+  in about half the time (4K: 7 ms instead of 13 ms) for shots played without
+  Resolve's render cache. Existing DWAB results keep working.
+- 1.02 (2026-11-16): log footage. Input Is now also takes ACEScct,
+  DaVinci Intermediate (DaVinci Wide Gamut), Blackmagic Film Gen 5, Sony
+  S-Log3 / S-Gamut3.Cine, ARRI LogC3 (EI 800), ARRI LogC4, Panasonic V-Log,
+  Canon Log 2 and Canon Log 3 (Cinema Gamut) and RED Log3G10 /
+  REDWideGamutRGB. The picture goes to linear Rec.709 for CorridorKey (curve
+  and primaries) and the output comes back in the same log and gamut. Earlier
+  choices and their stored results are unchanged.
+- 1.01 (2026-11-16): smoother playback once a shot is processed. Drawing a
+  frame from the stored results now uses every core: a 4K frame takes about
+  30 ms instead of about 180 ms (reading the result, the picture-changed
+  check and the output). Same look, same stored results; no new Process.
 - 1.00 (2026-11-13): first public release. Delete Cache says "Nothing to
   delete" when the node has no stored results, instead of reporting that it
   deleted them.
